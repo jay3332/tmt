@@ -1,7 +1,5 @@
 //! Uses Apple's SMC sensors to get data.
 
-use four_char_code::FourCharCode;
-
 bitflags::bitflags! {
     /// Represents a platform compatible with a sensor.
     pub struct Platform: u8 {
@@ -103,13 +101,12 @@ impl Sensor {
     }
 }
 
-pub fn get_all_sensors() -> Result<Vec<Sensor>, smc::SMCError> {
-    let keys = smc::SMC::new()?.keys()?;
+pub(crate) fn all_sensors() -> Result<impl Iterator<Item = Sensor>, smc::SMCError> {
+    let keys = smc::SMC::shared()?.keys()?;
 
     Ok(SENSORS
         .into_iter()
-        .filter(|sensor| keys.contains(&FourCharCode::from(sensor.key)))
-        .collect())
+        .filter(move |sensor| keys.contains(&sensor.key.into())))
 }
 
 /// A collection of known sensors.

@@ -58,7 +58,7 @@ dependencies = [
  "proc-macro-error",
  "proc-macro2 1.0.44",
  "quote 1.0.21",
- "syn 1.0.100",
+ "syn 1.0.101",
 ]
 
 [[package]]
@@ -202,9 +202,9 @@ dependencies = [
 
 [[package]]
 name = "ntapi"
-version = "0.3.7"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c28774a7fd2fbb4f0babd8237ce554b73af68021b5f695a3cebd6c59bac0980f"
+checksum = "bc51db7b362b205941f71232e56c625156eb9a929f8cf74a428fd5bc094a4afc"
 dependencies = [
  "winapi",
 ]
@@ -240,7 +240,7 @@ dependencies = [
  "proc-macro-error-attr",
  "proc-macro2 1.0.44",
  "quote 1.0.21",
- "syn 1.0.100",
+ "syn 1.0.101",
  "version_check",
 ]
 
@@ -330,8 +330,7 @@ checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
 [[package]]
 name = "smc"
 version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2bfc98679d63f2476a7846067a12366e593e9fb970d61966020768b8f326893"
+source = "git+https://github.com/jay3332/rust-smc#dc2b7316d6c291982d83aae62162edc9c2245746"
 dependencies = [
  "four-char-code",
  "lazy_static",
@@ -357,9 +356,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.100"
+version = "1.0.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52205623b1b0f064a4e71182c3b18ae902267282930c6d5462c91b859668426e"
+checksum = "e90cde112c4b9690b8cbe810cba9ddd8bc1d7472e2cae317b69e9438c1cba7d2"
 dependencies = [
  "proc-macro2 1.0.44",
  "quote 1.0.21",
@@ -368,9 +367,9 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.26.3"
+version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49086f670c15221b510c3f8c47e04e49714c56820d5ca78e2f58419e9fbb0f1b"
+checksum = "7890fff842b8db56f2033ebee8f6efe1921475c3830c115995552914fb967580"
 dependencies = [
  "cfg-if",
  "core-foundation-sys",
@@ -403,7 +402,6 @@ dependencies = [
  "bitflags",
  "clap",
  "core-foundation-sys",
- "four-char-code",
  "libc",
  "smc",
  "sysinfo",
