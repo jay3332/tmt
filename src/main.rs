@@ -1,5 +1,3 @@
-use sysinfo::SystemExt;
-
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod apple;
 
