@@ -1,5 +1,7 @@
 //! Uses Apple's SMC sensors to get data.
 
+use crate::{smc, Component, ComponentType, Interface};
+
 bitflags::bitflags! {
     /// Represents a platform compatible with a sensor.
     pub struct Platform: u8 {
@@ -19,6 +21,21 @@ bitflags::bitflags! {
         const ALL_M1 = Self::M1.bits | Self::M1_PRO.bits | Self::M1_MAX.bits | Self::M1_ULTRA.bits;
         /// An alias for all Apple Silicon-based Macs.
         const APPLE_SILICON = Self::ALL_M1.bits | Self::M2.bits;
+    }
+}
+
+/// Errors raised by this module.
+#[derive(Debug)]
+pub enum AppleError {
+    /// Error occured within Apple's SMC interface or within its bindings.
+    Smc(smc::SmcError),
+    /// Could not read platform information. (Sysctl error)
+    Sysctl,
+}
+
+impl From<smc::SmcError> for AppleError {
+    fn from(err: smc::SmcError) -> Self {
+        Self::Smc(err)
     }
 }
 
@@ -67,6 +84,8 @@ pub struct Sensor {
     pub platforms: Platform,
     /// Whether this sensor is calculated by an average of other sensors.
     pub average: bool,
+    /// The component type of this sensor.
+    pub component_type: ComponentType,
 }
 
 macro_rules! impl_sensor_group {
@@ -84,11 +103,13 @@ macro_rules! impl_sensor_group {
                 kind,
                 platforms,
                 average: false,
+                component_type: ComponentType::$variant,
             }
         }
     };
 }
 
+#[allow(clippy::self_named_constructors)]
 impl Sensor {
     impl_sensor_group!(cpu Cpu);
     impl_sensor_group!(gpu Gpu);
@@ -99,14 +120,229 @@ impl Sensor {
         self.average = true;
         self
     }
+
+    const fn component_type(mut self, kind: ComponentType) -> Self {
+        self.component_type = kind;
+        self
+    }
 }
 
-pub(crate) fn all_sensors() -> Result<impl Iterator<Item = Sensor>, smc::SMCError> {
-    let keys = smc::SMC::shared()?.keys()?;
+macro_rules! apple_component {
+    ($($variant:ident $t:ty),+) => {
+        pub enum AppleComponent {
+            $(
+                $variant($t),
+            )+
+        }
 
-    Ok(SENSORS
-        .into_iter()
-        .filter(move |sensor| keys.contains(&sensor.key.into())))
+        impl Component for AppleComponent {
+            fn label(&self) -> String {
+               match self {
+                   $(
+                       Self::$variant(component) => component.label(),
+                   )+
+               }
+            }
+
+            fn temperature(&self) -> f64 {
+                match self {
+                    $(
+                        Self::$variant(component) => component.temperature(),
+                    )+
+                }
+            }
+
+            fn max_temperature(&self) -> Option<f64> {
+                match self {
+                    $(
+                        Self::$variant(component) => component.max_temperature(),
+                    )+
+                }
+            }
+
+            fn component_type(&self) -> ComponentType {
+                match self {
+                    $(
+                        Self::$variant(component) => component.component_type(),
+                    )+
+                }
+            }
+
+            fn refresh(&mut self) -> Result<(), String> {
+                match self {
+                    $(
+                        Self::$variant(component) => component.refresh(),
+                    )+
+                }
+            }
+        }
+    };
+}
+
+apple_component! {
+    Cpu AppleCpuComponent,
+    Gpu AppleGpuComponent
+}
+
+macro_rules! xpu_component_impl {
+    ($($t:ident)+) => {
+        $(
+            pub struct $t {
+                smc: smc::Smc,
+                inner: Sensor,
+                previous: f64,
+                max: f64,
+            }
+
+            impl Component for $t {
+                fn label(&self) -> String {
+                    self.inner.name.to_string()
+                }
+
+                fn temperature(&self) -> f64 {
+                    self.previous
+                }
+
+                fn max_temperature(&self) -> Option<f64> {
+                    Some(self.max)
+                }
+
+                fn component_type(&self) -> ComponentType {
+                    ComponentType::Cpu
+                }
+
+                fn refresh(&mut self) -> Result<(), String> {
+                    self.previous = self
+                        .smc
+                        .temperature(self.inner.key.into())
+                        .map_err(|e| e.to_string())?;
+                    self.max = self.max.max(self.previous);
+
+                    Ok(())
+                }
+            }
+        )+
+    }
+}
+
+xpu_component_impl!(AppleCpuComponent AppleGpuComponent);
+
+pub struct AppleComponents {
+    smc: smc::Smc,
+    sensors: Vec<(Sensor, AppleComponent)>,
+}
+
+impl AppleComponents {
+    fn new() -> Result<Self, AppleError> {
+        let smc = smc::Smc::new()?;
+        let keys = smc.keys()?;
+        let processor = unsafe { read_processor().ok_or(AppleError::Sysctl)? };
+        let sensors = SENSORS
+            .into_iter()
+            .filter_map(|sensor| {
+                if keys.contains(&sensor.key.into()) && sensor.platforms.contains(processor) {
+                    let mut component = match sensor.component_type {
+                        ComponentType::Cpu => AppleComponent::Cpu(AppleCpuComponent {
+                            smc: smc.clone(),
+                            inner: sensor,
+                            previous: 0.0,
+                            max: 0.0,
+                        }),
+                        ComponentType::Gpu => AppleComponent::Gpu(AppleGpuComponent {
+                            smc: smc.clone(),
+                            inner: sensor,
+                            previous: 0.0,
+                            max: 0.0,
+                        }),
+                        _ => return None,
+                    };
+
+                    component.refresh().ok().map(|_| (sensor, component))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Ok(Self { smc, sensors })
+    }
+}
+
+impl Interface for AppleComponents {
+    type Component = AppleComponent;
+
+    fn thermal_components(&self) -> Vec<&Self::Component> {
+        self.sensors
+            .iter()
+            .filter_map(|(s, c)| (s.kind == SensorKind::Temperature).then_some(c))
+            .collect()
+    }
+
+    fn thermal_components_mut(&mut self) -> Vec<&mut Self::Component> {
+        self.sensors
+            .iter_mut()
+            .filter_map(|(s, c)| (s.kind == SensorKind::Temperature).then_some(c))
+            .collect()
+    }
+
+    fn os_name(&self) -> String {
+        todo!()
+    }
+}
+
+impl Default for AppleComponents {
+    fn default() -> Self {
+        Self::new().expect("could not init SMC: are you running as root?")
+    }
+}
+
+unsafe fn read_processor() -> Option<Platform> {
+    let mut size = 0usize;
+    let key = std::ffi::CString::new("machdep.cpu.brand_string").unwrap();
+
+    let res = libc::sysctlbyname(
+        key.as_ptr(),
+        std::ptr::null_mut(),
+        &mut size,
+        std::ptr::null_mut(),
+        0,
+    );
+    if res != 0 {
+        return None;
+    }
+
+    // Allow up to 24 characters for the processor name. Since we're only checking for the Apple
+    // Silicon processors, this should be enough: Apple MXX XXXXXXXXXXXXXXX
+    let mut chars = [0_i8; 24];
+
+    libc::sysctlbyname(
+        key.as_ptr(),
+        chars.as_mut_ptr() as *mut _,
+        &mut size,
+        std::ptr::null_mut(),
+        0,
+    );
+    if res != 0 {
+        return None;
+    }
+
+    let chars = &std::mem::transmute::<_, [u8; 24]>(chars);
+    let name = String::from_utf8_lossy(chars);
+    let name = name.trim_end_matches('\0');
+
+    if !name.starts_with("Apple M") {
+        return Some(Platform::INTEL);
+    }
+
+    // SAFETY: already checked that the name starts with "Apple M"
+    Some(match name.strip_prefix("Apple M").unwrap_unchecked() {
+        "1" => Platform::M1,
+        "1 Pro" => Platform::M1_PRO,
+        "1 Max" => Platform::M1_MAX,
+        "1 Ultra" => Platform::M1_ULTRA,
+        "2" => Platform::M2,
+        _ => Platform::INTEL,
+    })
 }
 
 /// A collection of known sensors.
@@ -257,19 +493,22 @@ pub const SENSORS: [Sensor; 94] = [
         "Northbridge diode",
         SensorKind::Temperature,
         Platform::all(),
-    ),
+    )
+    .component_type(ComponentType::Motherboard),
     Sensor::system(
         "TN0H",
         "Northbridge heatsink",
         SensorKind::Temperature,
         Platform::all(),
-    ),
+    )
+    .component_type(ComponentType::Motherboard),
     Sensor::system(
         "TN0P",
         "Northbridge proximity",
         SensorKind::Temperature,
         Platform::all(),
-    ),
+    )
+    .component_type(ComponentType::Motherboard),
     // M1 series CPU temperature sensors
     Sensor::cpu(
         "Tp09",
@@ -466,13 +705,15 @@ pub const SENSORS: [Sensor; 94] = [
         "Battery 1",
         SensorKind::Temperature,
         Platform::APPLE_SILICON,
-    ),
+    )
+    .component_type(ComponentType::Battery),
     Sensor::system(
         "TB2T",
         "Battery 2",
         SensorKind::Temperature,
         Platform::APPLE_SILICON,
-    ),
+    )
+    .component_type(ComponentType::Battery),
     Sensor::system(
         "TW0P",
         "Airport",
@@ -565,7 +806,8 @@ pub const SENSORS: [Sensor; 94] = [
         Platform::all(),
     ),
     Sensor::sensor("PC3C", "RAM", SensorKind::Power, Platform::all()),
-    Sensor::sensor("PPBR", "Battery", SensorKind::Power, Platform::all()),
+    Sensor::sensor("PPBR", "Battery", SensorKind::Power, Platform::all())
+        .component_type(ComponentType::Battery),
     Sensor::sensor("PDTR", "DC In", SensorKind::Power, Platform::all()),
     Sensor::sensor("PSTR", "System Total", SensorKind::Power, Platform::all()),
 ];
