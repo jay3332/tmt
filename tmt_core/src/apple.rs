@@ -208,7 +208,7 @@ macro_rules! xpu_component_impl {
                 }
 
                 fn component_type(&self) -> ComponentType {
-                    ComponentType::Cpu
+                    self.inner.component_type
                 }
 
                 fn refresh(&mut self) -> Result<(), String> {
@@ -268,6 +268,61 @@ impl AppleComponents {
     }
 }
 
+#[inline]
+fn friendly_name(version: &str) -> Option<&'static str> {
+    let mut stream = version.split('.');
+    let major = stream.next()?;
+
+    if major == "10" {
+        Some(match stream.next()? {
+            "0" => "Cheetah",
+            "1" => "Puma",
+            "2" => "Jaguar",
+            "3" => "Panther",
+            "4" => "Tiger",
+            "5" => "Leopard",
+            "6" => "Snow Leopard",
+            "7" => "Lion",
+            "8" => "Mountain Lion",
+            "9" => "Mavericks",
+            "10" => "Yosemite",
+            "11" => "El Capitan",
+            "12" => "Sierra",
+            "13" => "High Sierra",
+            "14" => "Mojave",
+            "15" => "Catalina",
+            _ => return None,
+        })
+    } else {
+        Some(match major {
+            "11" => "Big Sur",
+            "12" => "Monterey",
+            "13" => "Ventura",
+            _ => return None,
+        })
+    }
+}
+
+fn get_os_name() -> String {
+    plist::from_file("/System/Library/CoreServices/SystemVersion.plist")
+        .ok()
+        .as_ref()
+        .and_then(|v: &plist::Dictionary| v["ProductVersion"].as_string())
+        .map_or_else(
+            || "macOS <unknown>".to_string(),
+            |version| {
+                friendly_name(version).map_or_else(
+                    || format!("macOS {}", version),
+                    |friendly_name| format!("macOS {} ({})", version, friendly_name),
+                )
+            },
+        )
+}
+
+lazy_static::lazy_static! {
+    static ref OS_NAME: String = get_os_name();
+}
+
 impl Interface for AppleComponents {
     type Component = AppleComponent;
 
@@ -286,7 +341,7 @@ impl Interface for AppleComponents {
     }
 
     fn os_name(&self) -> String {
-        todo!()
+        OS_NAME.clone()
     }
 }
 
