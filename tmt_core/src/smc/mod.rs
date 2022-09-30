@@ -226,28 +226,6 @@ fn get_cpus_number() -> Option<usize> {
     }
 }
 
-fn get_cores_number() -> Option<usize> {
-    let mut mib: [i32; 2] = [CTL_HW, HW_PHYSICALCPU];
-    let mut num: u32 = 0;
-    let mut len: usize = std::mem::size_of::<u32>();
-
-    let res = unsafe {
-        sysctl(
-            &mut mib[0] as *mut _,
-            2,
-            &mut num as *mut _ as *mut c_void,
-            &mut len,
-            std::ptr::null_mut(),
-            0,
-        )
-    };
-    if res == -1 {
-        None
-    } else {
-        Some(num as usize)
-    }
-}
-
 struct SmcRepr(Mutex<io_connect_t>);
 
 impl SmcRepr {

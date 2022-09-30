@@ -1,4 +1,5 @@
-#![allow(clippy::cast_precision_loss)]
+#![feature(lint_reasons)]
+#![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
 
 use std::{
     io::{stdout, Stdout},
@@ -19,7 +20,7 @@ use tui::{
     backend::CrosstermBackend as TuiBackend,
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Style},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Terminal,
 };
 
@@ -31,10 +32,14 @@ macro_rules! exit {
     }};
 }
 
+#[allow(clippy::struct_excessive_bools, reason = "This is not a state machine")]
 struct Options {
     interval: Duration,
     critical: f64,
     no_raw_mode: bool,
+    all_cpu: bool,
+    all_gpu: bool,
+    vertical: bool,
 }
 
 fn option_parser() -> getopts::Options {
@@ -43,6 +48,10 @@ fn option_parser() -> getopts::Options {
     opts.optflag("h", "help", "print this help menu");
     opts.optflag("v", "version", "print the version");
     opts.optflag("N", "no-raw-mode", "do not enable raw terminal mode");
+    opts.optflag("", "all-cpu", "show all individual CPUs");
+    opts.optflag("", "all-gpu", "show all individual GPUs");
+    opts.optflag("a", "all", "show details on all CPU and GPU cores");
+    opts.optflag("", "vertical", "optimize UI for vertical/tall terminals");
     opts.optopt(
         "i",
         "interval",
@@ -60,7 +69,10 @@ fn option_parser() -> getopts::Options {
 
 fn parse_options() -> Result<Options, BoxError> {
     let opts = option_parser();
-    let matches = opts.parse(std::env::args().skip(1))?;
+    let matches = opts.parse(std::env::args().skip(1)).unwrap_or_else(|e| {
+        eprintln!("error: {}", e);
+        std::process::exit(2);
+    });
 
     if matches.opt_present("h") {
         println!(
@@ -77,6 +89,8 @@ fn parse_options() -> Result<Options, BoxError> {
         exit!();
     }
 
+    let all = matches.opt_present("a");
+
     Ok(Options {
         interval: Duration::from_secs_f64(
             matches
@@ -89,6 +103,9 @@ fn parse_options() -> Result<Options, BoxError> {
             .unwrap_or_else(|| "90.0".to_string())
             .parse::<f64>()?,
         no_raw_mode: matches.opt_present("N"),
+        all_cpu: all || matches.opt_present("all-cpu"),
+        all_gpu: all || matches.opt_present("all-gpu"),
+        vertical: matches.opt_present("vertical"),
     })
 }
 
@@ -113,6 +130,70 @@ fn format_thermal_intensity(temp: f64, options: &Options) -> String {
         reading = reading.green().bold().to_string();
     }
     reading
+}
+
+#[inline]
+fn render_xpu<'a>(
+    component_type: ComponentType,
+    name: &'static str,
+    show_all: bool,
+    provider: &mut Provider,
+    options: &'a Options,
+) -> Option<Paragraph<'a>> {
+    let components = provider.thermal_components_by_type(component_type);
+    if components.is_empty() {
+        return None;
+    }
+
+    let mut cpus_content = String::new();
+    let mut sum = 0.0;
+    let mut max = (0, 0.0);
+
+    for (i, cpu) in components.iter().enumerate() {
+        let temp = cpu.temperature();
+        sum += temp;
+
+        if temp > max.1 {
+            max = (i, temp);
+        }
+
+        if show_all {
+            cpus_content.push_str(&key_value_ui!(
+                cpu.label(),
+                format_thermal_intensity(temp, options)
+            ));
+        }
+    }
+
+    let average = sum / components.len() as f64;
+    let mut cpus = format!(
+        "{} {}\n",
+        "Count:".bold().cyan(),
+        components.len().to_string().bold().white(),
+    );
+    cpus.push_str(&format!(
+        "{} {}\n",
+        "Average:".cyan().bold(),
+        format_thermal_intensity(average, options)
+    ));
+    cpus.push_str(&format!(
+        "{} {} ({})\n",
+        "Hottest:".cyan().bold(),
+        components[max.0].label().white().bold(),
+        format_thermal_intensity(max.1, options),
+    ));
+    cpus.push_str(&cpus_content);
+
+    Some(
+        Paragraph::new(cpus.into_text().unwrap())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(name)
+                    .border_style(Style::default().fg(Color::Gray)),
+            )
+            .wrap(Wrap { trim: false }),
+    )
 }
 
 fn render(
@@ -146,45 +227,27 @@ fn render(
                 .border_style(Style::default().fg(Color::Gray)),
         );
 
-        let mut cpus_content = String::new();
-        let components = provider.thermal_components_by_type(ComponentType::Cpu);
-        let mut sum = 0.0;
-        let mut max = (0, 0.0);
+        let entries = [
+            render_xpu(
+                ComponentType::Cpu,
+                "CPUs",
+                options.all_cpu,
+                provider,
+                options,
+            ),
+            render_xpu(
+                ComponentType::Gpu,
+                "GPUs",
+                options.all_gpu,
+                provider,
+                options,
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
 
-        for (i, cpu) in components.iter().enumerate() {
-            let temp = cpu.temperature();
-            sum += temp;
-
-            if temp > max.1 {
-                max = (i, temp);
-            }
-
-            cpus_content.push_str(&key_value_ui!(
-                cpu.label(),
-                format_thermal_intensity(temp, options)
-            ));
-        }
-
-        let average = sum / components.len() as f64;
-        let mut cpus = format!(
-            "{} {}\n",
-            "Average:".cyan().bold(),
-            format_thermal_intensity(average, options)
-        );
-        cpus.push_str(&format!(
-            "{} {} ({})\n",
-            "Max:".cyan().bold(),
-            components[max.0].label().white().bold(),
-            format_thermal_intensity(max.1, options),
-        ));
-        cpus.push_str(&cpus_content);
-
-        let cpus = Paragraph::new(cpus.into_text().unwrap()).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("CPUs")
-                .border_style(Style::default().fg(Color::Gray)),
-        );
+        let constraints = vec![Constraint::Percentage(100 / entries.len() as u16); entries.len()];
 
         let layout = Layout::default()
             .direction(Direction::Vertical)
@@ -192,9 +255,21 @@ fn render(
             .margin(1)
             .split(full);
 
+        let next_row = Layout::default()
+            .direction(if options.vertical {
+                Direction::Vertical
+            } else {
+                Direction::Horizontal
+            })
+            .constraints(constraints)
+            .split(layout[1]);
+
         frame.render_widget(block, full);
         frame.render_widget(system, layout[0]);
-        frame.render_widget(cpus, layout[1]);
+
+        for (i, entry) in entries.into_iter().enumerate() {
+            frame.render_widget(entry, next_row[i]);
+        }
     })?;
 
     Ok(())
@@ -211,7 +286,7 @@ fn main() -> Result<(), BoxError> {
 
     let backend = TuiBackend::new(out);
     let mut terminal = Terminal::new(backend)?;
-    let mut provider = Provider::default();
+    let provider = Provider::default();
 
     let (tx, rx) = channel();
     let esc_tx = tx.clone();
@@ -231,14 +306,10 @@ fn main() -> Result<(), BoxError> {
                 std::thread::sleep(options.interval);
             }
         });
-        s.spawn(|| {
-            let tx = esc_tx;
-
-            loop {
-                if let Event::Key(key) = read().unwrap() {
-                    if key.code == KeyCode::Esc || key.code == KeyCode::Char('\x03') {
-                        tx.send(()).unwrap();
-                    }
+        s.spawn(move || loop {
+            if let Event::Key(key) = read().unwrap() {
+                if key.code == KeyCode::Esc || key.code == KeyCode::Char('\x03') {
+                    esc_tx.send(()).unwrap();
                 }
             }
         });
