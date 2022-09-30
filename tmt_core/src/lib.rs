@@ -7,9 +7,6 @@
     clippy::ptr_as_ptr
 )]
 
-use std::ffi::CStr;
-use std::process::Command;
-
 #[cfg(target_os = "macos")]
 mod apple;
 #[cfg(target_os = "macos")]

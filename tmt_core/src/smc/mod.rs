@@ -122,7 +122,7 @@ const SYS_IOKIT: kern_return_t = err_system!(0x38);
 const SUB_IOKIT_COMMON: kern_return_t = err_sub!(0);
 
 macro_rules! iokit_common_err {
-    ( $err:literal ) => {
+    ($err:literal) => {
         SYS_IOKIT | SUB_IOKIT_COMMON | $err
     };
 }
@@ -180,17 +180,20 @@ impl SmcError {
 impl fmt::Display for SmcError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::DriverNotFound => write!(f, "Driver not found."),
-            Self::FailedToOpen => write!(f, "Failed to open driver."),
-            Self::KeyNotFound(code) => write!(f, "Key {:?} not found.", code),
-            Self::NotPrivileged => write!(f, "You do NOT have enough privileges."),
-            Self::UnsafeFanSpeed => write!(f, "Fan speed is unsafe to be setted."),
+            Self::DriverNotFound => write!(f, "Driver not found"),
+            Self::FailedToOpen => write!(f, "Failed to open driver"),
+            Self::KeyNotFound(code) => write!(f, "SMC Key {:?} not found", code),
+            Self::NotPrivileged => write!(
+                f,
+                "Not enough privileges to perform this action, are you running on root?"
+            ),
+            Self::UnsafeFanSpeed => write!(f, "Unsafe fan speed"),
             Self::Unknown(io_res, smc_res) => write!(
                 f,
-                "Unknown error: IOKit exited with code {} and SMC result {}.",
+                "Unknown error: IOKit terminated with code {} and SMC result {}.",
                 io_res, smc_res
             ),
-            Self::Sysctl(errno) => write!(f, "sysctl() call failed with errno {}.", errno),
+            Self::Sysctl(errno) => write!(f, "sysctl() call failed with errno {}", errno),
         }
     }
 }

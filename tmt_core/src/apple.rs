@@ -370,7 +370,7 @@ unsafe fn read_processor() -> Option<Platform> {
     // Silicon processors, this should be enough: Apple MXX XXXXXXXXXXXXXXX
     let mut chars = [0_i8; 24];
 
-    libc::sysctlbyname(
+    let res = libc::sysctlbyname(
         key.as_ptr(),
         chars.as_mut_ptr() as *mut _,
         &mut size,

@@ -1,7 +1,7 @@
 #![allow(clippy::cast_precision_loss)]
 
 use std::{
-    io::{stdout, Stdout, Write},
+    io::{stdout, Stdout},
     sync::mpsc::channel,
     time::Duration,
 };
@@ -12,7 +12,7 @@ use crossterm::{
     cursor::Show,
     event::{read, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
-    style::{Color as AnsiColor, ContentStyle, Stylize},
+    style::Stylize,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use tui::{
@@ -168,12 +168,12 @@ fn render(
         let average = sum / components.len() as f64;
         let mut cpus = format!(
             "{} {}\n",
-            "Average:".cyan(),
+            "Average:".cyan().bold(),
             format_thermal_intensity(average, options)
         );
         cpus.push_str(&format!(
             "{} {} ({})\n",
-            "Max:".cyan(),
+            "Max:".cyan().bold(),
             components[max.0].label().white().bold(),
             format_thermal_intensity(max.1, options),
         ));
