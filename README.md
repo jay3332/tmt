@@ -1,5 +1,4 @@
 <div align="center">
-    <img src="frontend/public/turbine_banner.png">
     <h1>tmt</h1>
     <p>
         <sup>
