@@ -261,9 +261,7 @@ fn get_sensors_from_hwmon() -> Result<Vec<HwmonSensor>, LinuxError> {
         let sensor_type = std::fs::read_to_string(file_path.join("temp1_type"))
             .ok()
             .and_then(|s| HwmonSensorType::from_str(&s))
-            .ok_or(InvalidData(
-                "invalid hwmon temperature sensor type!".to_string(),
-            ))?;
+            .unwrap_or(HwmonSensorType::CpuDiode);
 
         sensors.push(HwmonSensor::new(
             file_path,
