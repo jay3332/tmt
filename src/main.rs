@@ -40,8 +40,7 @@ struct Options {
     interval: Duration,
     critical: f64,
     no_raw_mode: bool,
-    all_cpu: bool,
-    all_gpu: bool,
+    summary: bool,
     vertical: bool,
 }
 
@@ -51,9 +50,7 @@ fn option_parser() -> getopts::Options {
     opts.optflag("h", "help", "print this help menu");
     opts.optflag("v", "version", "print the version");
     opts.optflag("N", "no-raw-mode", "do not enable raw terminal mode");
-    opts.optflag("", "all-cpu", "show all individual CPUs");
-    opts.optflag("", "all-gpu", "show all individual GPUs");
-    opts.optflag("a", "all", "show details on all CPU and GPU cores");
+    opts.optflag("s", "summary", "hide details of individual components");
     opts.optflag("", "vertical", "optimize UI for vertical/tall terminals");
     opts.optopt(
         "i",
@@ -92,8 +89,6 @@ fn parse_options() -> Result<Options, BoxError> {
         exit!();
     }
 
-    let all = matches.opt_present("a");
-
     Ok(Options {
         interval: Duration::from_secs_f64(
             matches
@@ -106,8 +101,7 @@ fn parse_options() -> Result<Options, BoxError> {
             .unwrap_or_else(|| "90.0".to_string())
             .parse::<f64>()?,
         no_raw_mode: matches.opt_present("N"),
-        all_cpu: all || matches.opt_present("all-cpu"),
-        all_gpu: all || matches.opt_present("all-gpu"),
+        summary: matches.opt_present("s"),
         vertical: matches.opt_present("vertical"),
     })
 }
@@ -173,9 +167,9 @@ fn render_xpu<'a>(
 
     let mut cpus_content = String::new();
     let mut sum = 0.0;
-    let mut max = (0, 0.0);
+    let mut max = ("Unknown".to_string(), 0.0);
 
-    for (i, cpu) in components.iter().enumerate() {
+    for cpu in components.iter() {
         let temps = cpu.temperatures();
 
         for reading in temps {
@@ -183,7 +177,7 @@ fn render_xpu<'a>(
             sum += temp;
 
             if temp > max.1 {
-                max = (i, temp);
+                max = (reading.label(), temp);
             }
 
             if show_all {
@@ -210,7 +204,7 @@ fn render_xpu<'a>(
     cpus.push_str(&format!(
         "{} {} ({})\n",
         "Hottest:".cyan().bold(),
-        components[max.0].label().white().bold(),
+        max.0.white().bold(),
         format_thermal_intensity(max.1, options),
     ));
     cpus.push_str(&cpus_content);
@@ -264,7 +258,7 @@ fn render(
                 ComponentType::Cpu,
                 "CPUs",
                 provider.cpu_name(),
-                options.all_cpu,
+                !options.summary,
                 provider,
                 options,
             ),
@@ -272,7 +266,7 @@ fn render(
                 ComponentType::Gpu,
                 "GPUs",
                 "N/A".to_string(),
-                options.all_gpu,
+                !options.summary,
                 provider,
                 options,
             ),
@@ -281,7 +275,11 @@ fn render(
         .flatten()
         .collect::<Vec<_>>();
 
-        let constraints = vec![Constraint::Percentage(100 / entries.len() as u16); entries.len()];
+        let constraints = if entries.is_empty() {
+            Vec::with_capacity(0)
+        } else {
+            vec![Constraint::Percentage(100 / entries.len() as u16); entries.len()]
+        };
 
         let layout = Layout::default()
             .direction(Direction::Vertical)

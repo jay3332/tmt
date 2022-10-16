@@ -172,9 +172,8 @@ impl HwmonSensor {
                 }
 
                 let name = match (&self.name, read!("label")) {
-                    (Some(name), Some(label)) => format!("{}: {}", name, label),
-                    (Some(name), None) => name.clone(),
-                    (None, Some(label)) => label,
+                    (_, Some(label)) => label.trim().to_string(),
+                    (Some(name), None) => name.clone().trim().to_string(),
                     (None, None) => "Unknown".to_string(),
                 };
 
