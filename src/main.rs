@@ -11,7 +11,7 @@ use tmt_core::{Component, ComponentType, Interface, Provider, TemperatureReading
 use ansi_to_tui::IntoText;
 use crossterm::{
     cursor::Show,
-    event::{read, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{read, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
     style::Stylize,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -340,7 +340,10 @@ fn main() -> Result<(), BoxError> {
         });
         s.spawn(move || loop {
             if let Event::Key(key) = read().unwrap() {
-                if key.code == KeyCode::Esc || key.code == KeyCode::Char('\x03') {
+                if key.code == KeyCode::Esc
+                    || key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
                     esc_tx.send(()).unwrap();
                 }
             }
