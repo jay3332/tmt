@@ -9,7 +9,7 @@ def main() -> None:
         current = f.read()
     
     with open('site/index.html', 'w') as f:
-        bins = [TEMPLATE.format(bin) for bin in os.listdir('site/bins')]
+        bins = [TEMPLATE.format(bin) for bin in os.listdir('site/bin')]
         long_hash = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True).stdout.decode('utf-8')
         short_hash = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True).stdout.decode('utf-8')
 
