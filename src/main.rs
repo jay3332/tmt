@@ -190,12 +190,12 @@ fn render_xpu<'a>(
         }
     }
 
-    let average = sum / components.len() as f64;
-    let mut cpus = format!("{} {}\n", "Name:".bold().cyan(), name.bold().white(),);
+    let average = sum / total as f64;
+    let mut cpus = format!("{} {}\n", "Name:".bold().cyan(), name.bold().white());
     cpus.push_str(&format!(
         "{} {}\n",
         "Count:".bold().cyan(),
-        components.len().to_string().bold().white(),
+        total.to_string().bold().white(),
     ));
     cpus.push_str(&format!(
         "{} {}\n",
