@@ -40,7 +40,10 @@ jobs:
     - name: Build
       run: cargo build --verbose --release --target ${{ matrix.target }}
     
+    - name: Rename bin
+      run: mv target/${{ matrix.target }}/release/${{ env.BIN_NAME }}${{ matrix.ext }} ${{ env.BIN_NAME }}-${{ matrix.target }}${{ matrix.ext }}
+    
     - uses: actions/upload-artifact@v3
       with:
         name: bin
-        path: target/${{ matrix.target }}/release/${{ env.BIN_NAME }}${{ matrix.ext }}
+        path: ${{ env.BIN_NAME }}-${{ matrix.target }}${{ matrix.ext }}
