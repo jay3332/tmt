@@ -47,3 +47,47 @@ jobs:
       with:
         name: bin
         path: ${{ env.BIN_NAME }}-${{ matrix.target }}${{ matrix.ext }}
+
+  website:
+    needs: [build]
+    if: "success() && github.ref == 'refs/heads/main'"
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: get wheelhouse artifacts
+      uses: actions/download-artifact@v2
+      with:
+        name: bin
+        path: bin
+    
+    - run: mv bin site/
+
+    - name: Run template
+      run: python .github/workflows/scripts/site_template.py
+
+    - name: Setup Pages
+      uses: actions/configure-pages@v2
+
+    - name: Upload artifact
+      uses: actions/upload-pages-artifact@v1
+      with:
+        path: ./site
+
+  deploy_website:
+    needs: [website]
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v1
