@@ -30,6 +30,9 @@ macro_rules! exit {
     () => {{
         std::process::exit(0);
     }};
+    ($code:literal) => {{
+        std::process::exit($code);
+    }};
 }
 
 #[allow(clippy::struct_excessive_bools, reason = "This is not a state machine")]
@@ -71,7 +74,7 @@ fn parse_options() -> Result<Options, BoxError> {
     let opts = option_parser();
     let matches = opts.parse(std::env::args().skip(1)).unwrap_or_else(|e| {
         eprintln!("error: {}", e);
-        std::process::exit(2);
+        exit!(2);
     });
 
     if matches.opt_present("h") {
@@ -135,7 +138,8 @@ fn format_thermal_intensity(temp: f64, options: &Options) -> String {
 #[inline]
 fn render_xpu<'a>(
     component_type: ComponentType,
-    name: &'static str,
+    title: &'static str,
+    name: String,
     show_all: bool,
     provider: &mut Provider,
     options: &'a Options,
@@ -150,30 +154,34 @@ fn render_xpu<'a>(
     let mut max = (0, 0.0);
 
     for (i, cpu) in components.iter().enumerate() {
-        let temp = cpu.temperature();
-        sum += temp;
+        let temps = cpu.temperatures();
 
-        if temp > max.1 {
-            max = (i, temp);
-        }
+        for (label, temp) in temps {
+            sum += temp;
 
-        if show_all {
-            cpus_content.push_str(&key_value_ui!(
-                cpu.label(),
-                format_thermal_intensity(temp, options)
-            ));
+            if temp > max.1 {
+                max = (i, temp);
+            }
+
+            if show_all {
+                cpus_content.push_str(&key_value_ui!(
+                    label,
+                    format_thermal_intensity(temp, options)
+                ));
+            }
         }
     }
 
     let average = sum / components.len() as f64;
-    let mut cpus = format!(
+    let mut cpus = format!("{} {}\n", "Name:".bold().cyan(), name.bold().white(),);
+    cpus.push_str(&format!(
         "{} {}\n",
         "Count:".bold().cyan(),
         components.len().to_string().bold().white(),
-    );
+    ));
     cpus.push_str(&format!(
         "{} {}\n",
-        "Average:".cyan().bold(),
+        "Average:".bold().cyan(),
         format_thermal_intensity(average, options)
     ));
     cpus.push_str(&format!(
@@ -189,7 +197,7 @@ fn render_xpu<'a>(
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(name)
+                    .title(title)
                     .border_style(Style::default().fg(Color::Gray)),
             )
             .wrap(Wrap { trim: false }),
@@ -219,6 +227,7 @@ fn render(
 
         let mut system = String::new();
         system.push_str(&key_value_ui!("Operating System", provider.os_name()));
+        system.push_str(&key_value_ui!("Device", provider.device_model_name()));
 
         let system = Paragraph::new(system.into_text().unwrap()).block(
             Block::default()
@@ -231,6 +240,7 @@ fn render(
             render_xpu(
                 ComponentType::Cpu,
                 "CPUs",
+                provider.cpu_name(),
                 options.all_cpu,
                 provider,
                 options,
@@ -238,6 +248,7 @@ fn render(
             render_xpu(
                 ComponentType::Gpu,
                 "GPUs",
+                "N/A".to_string(),
                 options.all_gpu,
                 provider,
                 options,
@@ -251,7 +262,7 @@ fn render(
 
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(20), Constraint::Percentage(80)].as_ref())
+            .constraints([Constraint::Percentage(25), Constraint::Percentage(75)].as_ref())
             .margin(1)
             .split(full);
 

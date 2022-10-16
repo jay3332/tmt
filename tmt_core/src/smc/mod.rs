@@ -16,7 +16,6 @@ mod sys;
 
 use self::{conv::*, sys::*};
 use std::{
-    collections::HashMap,
     fmt,
     os::raw::c_void,
     sync::{Arc, Mutex},

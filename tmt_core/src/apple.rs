@@ -29,8 +29,6 @@ bitflags::bitflags! {
 pub enum AppleError {
     /// Error occured within Apple's SMC interface or within its bindings.
     Smc(smc::SmcError),
-    /// Could not read platform information. (Sysctl error)
-    Sysctl,
 }
 
 impl From<smc::SmcError> for AppleError {
@@ -236,11 +234,11 @@ impl AppleComponents {
     fn new() -> Result<Self, AppleError> {
         let smc = smc::Smc::new()?;
         let keys = smc.keys()?;
-        let processor = unsafe { read_processor().ok_or(AppleError::Sysctl)? };
+        let platform = read_platform();
         let sensors = SENSORS
             .into_iter()
             .filter_map(|sensor| {
-                if keys.contains(&sensor.key.into()) && sensor.platforms.contains(processor) {
+                if keys.contains(&sensor.key.into()) && sensor.platforms.contains(platform) {
                     let mut component = match sensor.component_type {
                         ComponentType::Cpu => AppleComponent::Cpu(AppleCpuComponent {
                             smc: smc.clone(),
@@ -321,6 +319,15 @@ fn get_os_name() -> String {
 
 lazy_static::lazy_static! {
     static ref OS_NAME: String = get_os_name();
+    static ref CPU_NAME: String = unsafe {
+        // Allow up to 24 characters for the processor name. Since we're only checking for the Apple
+        // Silicon processors, this should be enough: Apple MXX XXXXXXXXXXXXXXX
+        read_sysctl::<24>("machdep.cpu.brand_string").unwrap_or_else(|| "Unknown".to_string())
+    };
+    static ref MODEL_NAME: String = unsafe {
+        read_mac_model().map(|(mac_type, details)| format!("{} ({})", mac_type.as_str(), details))
+            .unwrap_or_else(|| "Unknown".to_string())
+    };
 }
 
 impl Interface for AppleComponents {
@@ -343,6 +350,14 @@ impl Interface for AppleComponents {
     fn os_name(&self) -> String {
         OS_NAME.clone()
     }
+
+    fn cpu_name(&self) -> String {
+        CPU_NAME.clone()
+    }
+
+    fn device_model_name(&self) -> String {
+        MODEL_NAME.clone()
+    }
 }
 
 impl Default for AppleComponents {
@@ -351,9 +366,9 @@ impl Default for AppleComponents {
     }
 }
 
-unsafe fn read_processor() -> Option<Platform> {
+unsafe fn read_sysctl<const LEN: usize>(key: &'static str) -> Option<String> {
     let mut size = 0usize;
-    let key = std::ffi::CString::new("machdep.cpu.brand_string").unwrap();
+    let key = std::ffi::CString::new(key).unwrap();
 
     let res = libc::sysctlbyname(
         key.as_ptr(),
@@ -366,9 +381,7 @@ unsafe fn read_processor() -> Option<Platform> {
         return None;
     }
 
-    // Allow up to 24 characters for the processor name. Since we're only checking for the Apple
-    // Silicon processors, this should be enough: Apple MXX XXXXXXXXXXXXXXX
-    let mut chars = [0_i8; 24];
+    let mut chars = [0_i8; LEN];
 
     let res = libc::sysctlbyname(
         key.as_ptr(),
@@ -381,22 +394,162 @@ unsafe fn read_processor() -> Option<Platform> {
         return None;
     }
 
-    let chars = &std::mem::transmute::<_, [u8; 24]>(chars);
-    let name = String::from_utf8_lossy(chars);
-    let name = name.trim_end_matches('\0');
+    let chars = &chars as *const _ as *const [_; LEN];
+    Some(
+        String::from_utf8_lossy(&*chars)
+            .trim_end_matches('\0')
+            .to_string(),
+    )
+}
 
-    if !name.starts_with("Apple M") {
-        return Some(Platform::INTEL);
+fn read_platform() -> Platform {
+    if !CPU_NAME.starts_with("Apple M") {
+        return Platform::INTEL;
     }
 
     // SAFETY: already checked that the name starts with "Apple M"
-    Some(match name.strip_prefix("Apple M").unwrap_unchecked() {
+    match unsafe { CPU_NAME.strip_prefix("Apple M").unwrap_unchecked() } {
         "1" => Platform::M1,
         "1 Pro" => Platform::M1_PRO,
         "1 Max" => Platform::M1_MAX,
         "1 Ultra" => Platform::M1_ULTRA,
         "2" => Platform::M2,
         _ => Platform::INTEL,
+    }
+}
+
+/// The type of Mac the system is running on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MacType {
+    /// Mac Mini
+    MacMini,
+    /// iMac
+    IMac,
+    /// iMac Pro
+    IMacPro,
+    /// Mac Pro
+    MacPro,
+    /// MacBook
+    MacBook,
+    /// MacBook Air
+    MacBookAir,
+    /// MacBook Pro
+    MacBookPro,
+    /// Mac Studio
+    MacStudio,
+}
+
+impl MacType {
+    /// Returns this as the official listing name on Apple.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::MacMini => "Mac mini",
+            Self::IMac => "iMac",
+            Self::IMacPro => "iMac Pro",
+            Self::MacPro => "Mac Pro",
+            Self::MacBook => "MacBook",
+            Self::MacBookAir => "MacBook Air",
+            Self::MacBookPro => "MacBook Pro",
+            Self::MacStudio => "Mac Studio",
+        }
+    }
+}
+
+unsafe fn read_mac_model() -> Option<(MacType, &'static str)> {
+    // Allow up to 16 characters for the model identifier name. This should be enough.
+    // From what I can tell, "MacBookPro" is the longest base name, and so it should cover
+    // XXXXXXXXXNN,N with three extra characters to spare for futureproofing.
+    let model_id = read_sysctl::<16>("hw.model")?;
+
+    Some(match &*model_id {
+        // Mac mini
+        "Macmini9,1" => (MacType::MacMini, "M1, 2020"),
+        "ADP3,2" => (MacType::MacMini, "Developer Transition Kit"),
+        "Macmini8,1" => (MacType::MacMini, "2018"),
+        "Macmini7,1" => (MacType::MacMini, "Late 2014"),
+        "Macmini6,2" | "Macmini6,1" => (MacType::MacMini, "Late 2012"),
+        "Macmini5,3" => (MacType::MacMini, "Mid 2011, Server"),
+        "Macmini5,2" | "Macmini5,1" => (MacType::MacMini, "Mid 2011"),
+        "Macmini4,1" => (MacType::MacMini, "Mid 2010"),
+        // iMac
+        "iMac21,1" => (MacType::IMac, "24-inch, M1, 2021"),
+        "iMac20,2" => (MacType::IMac, "Retina 5K, 27-inch, 2020; 5700/XT"),
+        "iMac20,1" => (MacType::IMac, "Retina 5K, 27-inch, 2020"),
+        "iMac19,2" => (MacType::IMac, "Retina 4K, 21.5-inch, 2019"),
+        "iMac19,1" => (MacType::IMac, "Retina 5K, 27-inch, 2019"),
+        "iMacPro1,1" => (MacType::IMacPro, "2017"),
+        "iMac18,3" => (MacType::IMac, "Retina 5K, 27-inch, 2017"),
+        "iMac18,2" => (MacType::IMac, "Retina 4K, 21.5-inch, 2017"),
+        "iMac18,1" => (MacType::IMac, "21.5-inch, 2017"),
+        "iMac17,1" => (MacType::IMac, "Retina 5K, 27-inch, Late 2015"),
+        "iMac16,2" => (MacType::IMac, "Retina 4K, 21.5-inch, Late 2015"),
+        "iMac16,1" => (MacType::IMac, "21.5-inch, Late 2015"),
+        "iMac15,1" => (MacType::IMac, "Retina 5K, 27-inch, Late 2014"),
+        "iMac14,4" => (MacType::IMac, "21.5-inch, Mid 2014"),
+        "iMac14,3" | "iMac14,1" => (MacType::IMac, "21.5-inch, Late 2013"),
+        "iMac14,2" => (MacType::IMac, "27-inch, Late 2013"),
+        "iMac13,3" => (MacType::IMac, "Late 2012"),
+        "iMac13,2" => (MacType::IMac, "27-inch, Late 2012"),
+        "iMac13,1" => (MacType::IMac, "21.5-inch, Late 2012"),
+        "iMac12,2" => (MacType::IMac, "27-inch, Mid 2011"),
+        "iMac12,1" => (MacType::IMac, "21.5-inch, Mid 2011"),
+        "iMac11,3" => (MacType::IMac, "27-inch, Mid 2010"),
+        "iMac11,2" => (MacType::IMac, "21.5-inch, Mid 2010"),
+        // Mac Pro
+        "MacPro7,1" => (MacType::MacPro, "2019"),
+        "MacPro6,1" => (MacType::MacPro, "Late 2013"),
+        "MacPro5,1" => (MacType::MacPro, "Mid 2010"),
+        "MacPro4,1" => (MacType::MacPro, "Early 2009"),
+        // MacBook
+        "MacBook10,1" => (MacType::MacBook, "2017"),
+        "MacBook9,1" => (MacType::MacBook, "2016"),
+        "MacBook8,1" => (MacType::MacBook, "2015"),
+        // MacBook Air
+        "Mac14,2" => (MacType::MacBookAir, "13-inch, 2022 (M2)"),
+        "MacBookAir10,1" => (MacType::MacBookAir, "13-inch, 2020 (M1)"),
+        "MacBookAir9,1" => (MacType::MacBookAir, "13-inch, 2020"),
+        "MacBookAir8,2" => (MacType::MacBookAir, "13-inch, 2019"),
+        "MacBookAir8,1" => (MacType::MacBookAir, "13-inch, 2018"),
+        "MacBookAir7,2" => (MacType::MacBookAir, "13-inch, 2015"),
+        "MacBookAir7,1" => (MacType::MacBookAir, "11-inch, 2015"),
+        "MacBookAir6,2" => (MacType::MacBookAir, "13-inch, 2014"),
+        "MacBookAir6,1" => (MacType::MacBookAir, "11-inch, 2014"),
+        "MacBookAir5,2" => (MacType::MacBookAir, "13-inch, 2012"),
+        "MacBookAir5,1" => (MacType::MacBookAir, "11-inch, 2012"),
+        // MacBook Pro
+        "Mac14,7" => (MacType::MacBookPro, "13-inch, 2022 (M2)"),
+        "MacBookPro18,4" => (MacType::MacBookPro, "14-inch, 2021 (M1 Max)"),
+        "MacBookPro18,3" => (MacType::MacBookPro, "14-inch, 2021 (M1 Pro)"),
+        "MacBookPro18,2" => (MacType::MacBookPro, "16-inch, 2021 (M1 Max)"),
+        "MacBookPro18,1" => (MacType::MacBookPro, "16-inch, 2021 (M1 Pro)"),
+        "MacBookPro17,1" => (MacType::MacBookPro, "13-inch, 2020 (M1)"),
+        "MacBookPro16,3" => (MacType::MacBookPro, "13-inch, 2020"),
+        "MacBookPro16,2" => (MacType::MacBookPro, "13-inch, 2019"),
+        "MacBookPro16,1" => (MacType::MacBookPro, "16-inch, 2019"),
+        "MacBookPro15,4" => (MacType::MacBookPro, "13-inch, 2019"),
+        "MacBookPro15,3" => (MacType::MacBookPro, "15-inch, 2019"),
+        "MacBookPro15,2" => (MacType::MacBookPro, "13-inch, 2019"),
+        "MacBookPro15,1" => (MacType::MacBookPro, "15-inch, 2018"),
+        "MacBookPro14,3" => (MacType::MacBookPro, "15-inch, 2017"),
+        "MacBookPro14,2" => (MacType::MacBookPro, "13-inch, 2017"),
+        "MacBookPro14,1" => (MacType::MacBookPro, "13-inch, 2017"),
+        "MacBookPro13,3" => (MacType::MacBookPro, "15-inch, 2016"),
+        "MacBookPro13,2" => (MacType::MacBookPro, "13-inch, 2016"),
+        "MacBookPro13,1" => (MacType::MacBookPro, "13-inch, 2016"),
+        "MacBookPro12,1" => (MacType::MacBookPro, "13-inch, 2015"),
+        "MacBookPro11,5" => (MacType::MacBookPro, "15-inch, 2015"),
+        "MacBookPro11,4" => (MacType::MacBookPro, "15-inch, 2015"),
+        "MacBookPro11,3" => (MacType::MacBookPro, "15-inch, 2014"),
+        "MacBookPro11,2" => (MacType::MacBookPro, "15-inch, 2014"),
+        "MacBookPro11,1" => (MacType::MacBookPro, "13-inch, 2014"),
+        "MacBookPro10,2" => (MacType::MacBookPro, "15-inch, 2013"),
+        "MacBookPro10,1" => (MacType::MacBookPro, "13-inch, 2013"),
+        "MacBookPro9,2" => (MacType::MacBookPro, "15-inch, 2012"),
+        "MacBookPro9,1" => (MacType::MacBookPro, "13-inch, 2012"),
+        // Mac Studio
+        "Mac13,1" => (MacType::MacStudio, "2022 (M1 Max)"),
+        "Mac13,2" => (MacType::MacStudio, "2022 (M1 Ultra)"),
+        _ => return None,
     })
 }
 

@@ -6,11 +6,16 @@
     clippy::wildcard_imports,
     clippy::ptr_as_ptr
 )]
+// TODO get rid of this
+#![allow(dead_code)]
+#![feature(is_some_with)]
 
 #[cfg(target_os = "macos")]
 mod apple;
 #[cfg(target_os = "macos")]
 pub(crate) mod smc;
+// #[cfg(target_os = "linux")]
+mod linux;
 
 /// The type of component.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -36,10 +41,20 @@ pub trait Component {
     /// The label of the component.
     fn label(&self) -> String;
 
-    /// The current temperature of the component, in celsius.
-    fn temperature(&self) -> f64;
+    /// The singular temperature reading of the component, in celsius.
+    fn temperature(&self) -> f64 {
+        unimplemented!(
+            "cannot resolve one single temperature from this component, try using the \
+            `temperatures` method instead"
+        )
+    }
 
-    /// The maximum temperature of the component, in celsius.
+    /// The current temperature readings of the component, in celsius.
+    fn temperatures(&self) -> Vec<(String, f64)> {
+        vec![(self.label(), self.temperature())]
+    }
+
+    /// The maximum temperature reading of the component, in celsius.
     fn max_temperature(&self) -> Option<f64>;
 
     /// The CPU, GPU, or battery percentage of the component, from 0.0 to 100.0.
@@ -93,6 +108,12 @@ pub trait Interface: Default {
     /// The OS name of the interface.
     fn os_name(&self) -> String;
 
+    /// The name of the CPU or core processor.
+    fn cpu_name(&self) -> String;
+
+    /// The model of the device.
+    fn device_model_name(&self) -> String;
+
     /// Refreshes the interface for the next iteration. By default this refreshes every component
     /// received in [`Interface::thermal_components_mut`].
     fn refresh(&mut self) -> Result<(), String> {
@@ -106,3 +127,5 @@ pub trait Interface: Default {
 
 #[cfg(target_os = "macos")]
 pub use apple::AppleComponents as Provider;
+#[cfg(target_os = "linux")]
+pub use linux::LinuxComponents as Provider;
