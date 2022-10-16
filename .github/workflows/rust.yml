@@ -12,17 +12,16 @@ jobs:
   build:
     strategy:
       matrix:
-        platform: ['macos-x86', 'macos-aarch64', 'linux-x86']
+        target: ['x86_64-apple-darwin', 'aarch64-apple-darwin', 'x86_64-unknown-linux-gnu']
         
         include:
-          - platform: 'macos-x86'
+          - target: 'x86_64-apple-darwin'
             os: 'macos'
 
-          - platform: 'macos-aarch64'
+          - target: 'aarch64-apple-darwin'
             os: 'macos'
-            add_arg: '--target aarch64-apple-darwin'
 
-          - platform: 'linux-x86'
+          - target: 'x86_64-unknown-linux-gnu'
             os: 'ubuntu'
       
     runs-on: ${{ format('{0}-latest', matrix.os) }}
@@ -39,11 +38,9 @@ jobs:
     - uses: Swatinem/rust-cache@v2
 
     - name: Build
-      run: cargo build --verbose --release ${{ matrix.add_arg }}
+      run: cargo build --verbose --release --target ${{ matrix.target }}
     
     - uses: actions/upload-artifact@v3
       with:
         name: bin
-        path: |
-          target/*/release/${{ env.BIN_NAME }}*
-          target/release/${{ env.BIN_NAME }}*
+        path: target/${{ matrix.target }}/release/${{ env.BIN_NAME }}${{ matrix.ext }}
