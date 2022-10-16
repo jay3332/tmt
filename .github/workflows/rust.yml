@@ -1,0 +1,48 @@
+name: Rust
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: tmt
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        platform: ['macos-x86', 'macos-aarch64', 'linux-x86']
+        
+        include:
+          - platform: 'macos-x86'
+            os: 'macos'
+
+          - platform: 'macos-aarch64'
+            os: 'macos'
+            add_arg: '--target aarch64-apple-darwin'
+
+          - platform: 'linux-x86'
+            os: 'ubuntu'
+      
+    runs-on: ${{ format('{0}-latest', matrix.os) }}
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        override: true
+    
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Build
+      run: cargo build --verbose --release ${{ matrix.add_arg }}
+    
+    - uses: actions/upload-artifact@v3
+      with:
+        name: bin
+        path: |
+          target/*/release/${{ env.BIN_NAME }}*
+          target/release/${{ env.BIN_NAME }}*    
