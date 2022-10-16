@@ -14,7 +14,7 @@
 mod apple;
 #[cfg(target_os = "macos")]
 pub(crate) mod smc;
-// #[cfg(target_os = "linux")]
+#[cfg(target_os = "linux")]
 mod linux;
 
 /// The type of component.
