@@ -8,7 +8,7 @@
 )]
 // TODO get rid of this
 #![allow(dead_code)]
-#![feature(is_some_with)]
+#![feature(is_some_and)]
 
 #[cfg(target_os = "macos")]
 mod apple;
@@ -36,26 +36,33 @@ pub enum ComponentType {
     System,
 }
 
+/// Common interface that represents a single temperature reading.
+pub trait TemperatureReading {
+    /// The label/name of what this temperature represents.
+    fn label(&self) -> String;
+
+    /// The current reading in degrees Celsius.
+    fn temperature(&self) -> f64;
+
+    /// The maximum recorded temperature in degrees Celsius.
+    fn max(&self) -> f64;
+
+    /// The temperature that will be considered "high", in degrees Celsius.
+    fn high(&self) -> f64;
+
+    /// The temperature that will be considered "critical", in degrees Celsius.
+    fn critical(&self) -> f64;
+}
+
 /// Common interface that represents a temperature-measurable system component.
 pub trait Component {
+    type TemperatureReading: TemperatureReading;
+
     /// The label of the component.
     fn label(&self) -> String;
 
-    /// The singular temperature reading of the component, in celsius.
-    fn temperature(&self) -> f64 {
-        unimplemented!(
-            "cannot resolve one single temperature from this component, try using the \
-            `temperatures` method instead"
-        )
-    }
-
     /// The current temperature readings of the component, in celsius.
-    fn temperatures(&self) -> Vec<(String, f64)> {
-        vec![(self.label(), self.temperature())]
-    }
-
-    /// The maximum temperature reading of the component, in celsius.
-    fn max_temperature(&self) -> Option<f64>;
+    fn temperatures(&self) -> Vec<Self::TemperatureReading>;
 
     /// The CPU, GPU, or battery percentage of the component, from 0.0 to 100.0.
     fn percentage(&self) -> Option<f32> {

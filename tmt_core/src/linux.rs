@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use self::LinuxError::InvalidData;
-use super::{Component, ComponentType, Interface};
+use super::{Component, ComponentType, Interface, TemperatureReading as TemperatureReadingTrait};
 
 /// An error that occured in this module.
 #[derive(Debug)]
@@ -64,9 +64,35 @@ impl HwmonSensorType {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct TemperatureReading {
     pub name: String,
     pub temperature: u32,
+    pub max: u32,
+    pub high: u32,
+    pub crit: u32,
+}
+
+impl TemperatureReadingTrait for TemperatureReading {
+    fn label(&self) -> String {
+        self.name.clone()
+    }
+
+    fn temperature(&self) -> f64 {
+        self.temperature as f64 / 1000.0
+    }
+
+    fn max(&self) -> f64 {
+        self.max as f64 / 1000.0
+    }
+
+    fn high(&self) -> f64 {
+        self.high as f64 / 1000.0
+    }
+
+    fn critical(&self) -> f64 {
+        self.crit as f64 / 1000.0
+    }
 }
 
 pub struct HwmonSensor {
@@ -136,19 +162,44 @@ impl HwmonSensor {
                     InvalidData(format!("read invalid temperature {}", temperature))
                 })?;
 
-                let name = name.replace("_input", "_label");
-                let name = self.path.join(name);
-                let name = std::fs::read_to_string(name).ok();
+                macro_rules! read {
+                    ($field:literal) => {{
+                        let name = name.replace("_input", concat!("_", $field));
+                        let name = self.path.join(name);
 
-                let name = match (&self.name, name) {
+                        std::fs::read_to_string(name).ok()
+                    }};
+                }
+
+                let name = match (&self.name, read!("label")) {
                     (Some(name), Some(label)) => format!("{}: {}", name, label),
                     (Some(name), None) => name.clone(),
                     (None, Some(label)) => label,
                     (None, None) => "Unknown".to_string(),
                 };
 
-                self.readings
-                    .insert(name.clone(), TemperatureReading { name, temperature });
+                let max = read!("highest")
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                    .unwrap_or(0);
+
+                let high = read!("max")
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                    .unwrap_or(85_000);
+
+                let crit = read!("crit")
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                    .unwrap_or(100_000);
+
+                self.readings.insert(
+                    name.clone(),
+                    TemperatureReading {
+                        name,
+                        temperature,
+                        max,
+                        high,
+                        crit,
+                    },
+                );
             }
         }
 
@@ -163,6 +214,9 @@ pub struct ThermalZoneSensor {
     path: PathBuf,
     name: String,
     last_reading: Option<u32>,
+    max: u32,
+    high: u32,
+    crit: u32,
 }
 
 impl ThermalZoneSensor {
@@ -240,10 +294,46 @@ fn get_sensors_from_thermal_zone() -> Result<Vec<ThermalZoneSensor>, LinuxError>
         let name = std::fs::read_to_string(entry.path().join("type"))?;
         let name = name.trim().to_string();
 
+        let (mut high, mut critical) = (85_000, 100_000);
+
+        for entry in entry.path().read_dir()? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_str().ok_or(InvalidData(
+                "thermal zone sensor had a non-ascii device filename".to_string(),
+            ))?;
+
+            if !name.starts_with("trip_point_") || !name.ends_with("_temp") {
+                continue;
+            }
+
+            let temperature = std::fs::read_to_string(entry.path())?;
+            let temperature = temperature
+                .trim()
+                .parse::<u32>()
+                .map_err(|_| InvalidData(format!("read invalid temperature {}", temperature)))?;
+
+            let name = name.replace("_temp", "_type");
+            let name = entry.path().parent().unwrap().join(name);
+
+            match std::fs::read_to_string(name)
+                .ok()
+                .unwrap_or_default()
+                .trim()
+            {
+                "critical" => critical = temperature,
+                "hot" => high = temperature,
+                _ => continue,
+            }
+        }
+
         sensors.push(ThermalZoneSensor {
             path: entry.path(),
             name,
             last_reading: None,
+            max: 0,
+            high,
+            crit: critical,
         });
     }
 
@@ -256,6 +346,8 @@ pub enum LinuxHardwareComponent {
 }
 
 impl Component for LinuxHardwareComponent {
+    type TemperatureReading = TemperatureReading;
+
     fn label(&self) -> String {
         match self {
             Self::Hwmon(sensor) => sensor.name.as_ref().unwrap().clone(),
@@ -263,35 +355,34 @@ impl Component for LinuxHardwareComponent {
         }
     }
 
-    fn temperatures(&self) -> Vec<(String, f64)> {
+    fn temperatures(&self) -> Vec<Self::TemperatureReading> {
         match self {
-            Self::Hwmon(sensor) => sensor
-                .readings
-                .values()
-                .map(|TemperatureReading { name, temperature }| {
-                    (name.clone(), *temperature as f64 / 1000.0)
+            Self::Hwmon(sensor) => sensor.readings.values().cloned().collect(),
+            Self::ThermalZone(sensor) => sensor
+                .last_reading
+                .map(|temperature| {
+                    vec![TemperatureReading {
+                        name: sensor.name.clone(),
+                        temperature,
+                        max: sensor.max,
+                        high: sensor.high,
+                        crit: sensor.crit,
+                    }]
                 })
-                .collect(),
-            Self::ThermalZone(sensor) => vec![(
-                sensor.name.clone(),
-                sensor
-                    .last_reading
-                    .map(|t| t as f64 / 1000.0)
-                    .unwrap_or_default(),
-            )],
+                .unwrap_or_default(),
         }
     }
 
-    fn max_temperature(&self) -> Option<f64> {
-        todo!()
-    }
-
     fn component_type(&self) -> ComponentType {
-        todo!()
+        // TODO (this is a placeholder)
+        ComponentType::Cpu
     }
 
     fn refresh(&mut self) -> Result<(), String> {
-        todo!()
+        match self {
+            Self::Hwmon(sensor) => sensor.read_temperatures().map_err(|e| e.to_string()),
+            Self::ThermalZone(sensor) => sensor.read_temperature().map_err(|e| e.to_string()),
+        }
     }
 }
 

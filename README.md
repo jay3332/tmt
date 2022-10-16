@@ -59,3 +59,16 @@ What *can't* TMT do?
 - TMT may not support the newest hardware immediately, since many implementations
   for specific hardware must be hardcoded.
 - TMT is still in heavy development. Expect bugs and crashes.
+
+## What makes TMT stand out?
+
+There are many other tools out there similar to TMT - so what makes TMT
+stand out?
+
+- **TMT is cross-platform.** TMT supports Windows, Linux, and macOS, and
+  will likely support more platforms in the future.
+- **TMT is lightweight.** TMT has a small binary size and uses very little
+  memory, and is designed to be as lightweight as possible.
+- **Full Windows support.** But you just stated that TMT is cross-platform.
+  True, but many other similar tools are *also* cross-platform. However,
+  TMT fully supports Windows hardware, 

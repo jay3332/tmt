@@ -1,6 +1,6 @@
 //! Uses Apple's SMC sensors to get data.
 
-use crate::{smc, Component, ComponentType, Interface};
+use crate::{smc, Component, ComponentType, Interface, TemperatureReading};
 
 bitflags::bitflags! {
     /// Represents a platform compatible with a sensor.
@@ -125,6 +125,30 @@ impl Sensor {
     }
 }
 
+pub struct AppleTemperatureReading(String, f64, f64);
+
+impl TemperatureReading for AppleTemperatureReading {
+    fn label(&self) -> String {
+        self.0.clone()
+    }
+
+    fn temperature(&self) -> f64 {
+        self.1
+    }
+
+    fn max(&self) -> f64 {
+        self.2
+    }
+
+    fn high(&self) -> f64 {
+        85.0
+    }
+
+    fn critical(&self) -> f64 {
+        100.0
+    }
+}
+
 macro_rules! apple_component {
     ($($variant:ident $t:ty),+) => {
         pub enum AppleComponent {
@@ -134,6 +158,8 @@ macro_rules! apple_component {
         }
 
         impl Component for AppleComponent {
+            type TemperatureReading = AppleTemperatureReading;
+
             fn label(&self) -> String {
                match self {
                    $(
@@ -142,18 +168,10 @@ macro_rules! apple_component {
                }
             }
 
-            fn temperature(&self) -> f64 {
+            fn temperatures(&self) -> Vec<Self::TemperatureReading> {
                 match self {
                     $(
-                        Self::$variant(component) => component.temperature(),
-                    )+
-                }
-            }
-
-            fn max_temperature(&self) -> Option<f64> {
-                match self {
-                    $(
-                        Self::$variant(component) => component.max_temperature(),
+                        Self::$variant(component) => component.temperatures(),
                     )+
                 }
             }
@@ -193,16 +211,16 @@ macro_rules! xpu_component_impl {
             }
 
             impl Component for $t {
+                type TemperatureReading = AppleTemperatureReading;
+
                 fn label(&self) -> String {
                     self.inner.name.to_string()
                 }
 
-                fn temperature(&self) -> f64 {
-                    self.previous
-                }
-
-                fn max_temperature(&self) -> Option<f64> {
-                    Some(self.max)
+                fn temperatures(&self) -> Vec<Self::TemperatureReading> {
+                    vec![
+                        AppleTemperatureReading(self.label(), self.previous, self.max)
+                    ]
                 }
 
                 fn component_type(&self) -> ComponentType {

@@ -6,7 +6,7 @@ use std::{
     sync::mpsc::channel,
     time::Duration,
 };
-use tmt_core::{Component, ComponentType, Interface, Provider};
+use tmt_core::{Component, ComponentType, Interface, Provider, TemperatureReading};
 
 use ansi_to_tui::IntoText;
 use crossterm::{
@@ -122,12 +122,34 @@ macro_rules! key_value_ui {
     }};
 }
 
-fn format_thermal_intensity(temp: f64, options: &Options) -> String {
+impl TemperatureReading for &Options {
+    fn label(&self) -> String {
+        unreachable!("options.label() should not be used in the UI")
+    }
+
+    fn temperature(&self) -> f64 {
+        unreachable!("options.temperature() should not be used in the UI")
+    }
+
+    fn max(&self) -> f64 {
+        unreachable!("options.max() should not be used in the UI")
+    }
+
+    fn high(&self) -> f64 {
+        self.critical - 15.0
+    }
+
+    fn critical(&self) -> f64 {
+        self.critical
+    }
+}
+
+fn format_thermal_intensity(temp: f64, options: impl TemperatureReading) -> String {
     let mut reading = format!("{:.1}° C", temp);
-    if temp >= options.critical {
+    if temp >= options.critical() {
         reading = reading.red().bold().to_string();
         reading.push_str(" (CRITICAL)");
-    } else if temp >= options.critical - 15.0 {
+    } else if temp >= options.high() {
         reading = reading.yellow().bold().to_string();
     } else {
         reading = reading.green().bold().to_string();
@@ -156,7 +178,8 @@ fn render_xpu<'a>(
     for (i, cpu) in components.iter().enumerate() {
         let temps = cpu.temperatures();
 
-        for (label, temp) in temps {
+        for reading in temps {
+            let temp = reading.temperature();
             sum += temp;
 
             if temp > max.1 {
@@ -165,8 +188,8 @@ fn render_xpu<'a>(
 
             if show_all {
                 cpus_content.push_str(&key_value_ui!(
-                    label,
-                    format_thermal_intensity(temp, options)
+                    reading.label(),
+                    format_thermal_intensity(temp, reading)
                 ));
             }
         }
