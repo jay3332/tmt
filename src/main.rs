@@ -166,7 +166,7 @@ fn render_xpu<'a>(
     }
 
     let mut cpus_content = String::new();
-    let mut sum = 0.0;
+    let (mut sum, mut total) = (0.0, 0_usize);
     let mut max = ("Unknown".to_string(), 0.0);
 
     for cpu in components.iter() {
@@ -175,6 +175,7 @@ fn render_xpu<'a>(
         for reading in temps {
             let temp = reading.temperature();
             sum += temp;
+            total += 1;
 
             if temp > max.1 {
                 max = (reading.label(), temp);
