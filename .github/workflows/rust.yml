@@ -12,17 +12,16 @@ jobs:
   build:
     strategy:
       matrix:
-        platform: ['macos-x86', 'macos-aarch64', 'linux-x86']
+        target: ['x86_64-apple-darwin', 'aarch64-apple-darwin', 'x86_64-unknown-linux-gnu']
         
         include:
-          - platform: 'macos-x86'
+          - target: 'x86_64-apple-darwin'
             os: 'macos'
 
-          - platform: 'macos-aarch64'
+          - target: 'aarch64-apple-darwin'
             os: 'macos'
-            add_arg: '--target aarch64-apple-darwin'
 
-          - platform: 'linux-x86'
+          - target: 'x86_64-unknown-linux-gnu'
             os: 'ubuntu'
       
     runs-on: ${{ format('{0}-latest', matrix.os) }}
@@ -39,11 +38,56 @@ jobs:
     - uses: Swatinem/rust-cache@v2
 
     - name: Build
-      run: cargo build --verbose --release ${{ matrix.add_arg }}
+      run: cargo build --verbose --release --target ${{ matrix.target }}
+    
+    - name: Rename bin
+      run: mv target/${{ matrix.target }}/release/${{ env.BIN_NAME }}${{ matrix.ext }} ${{ env.BIN_NAME }}-${{ matrix.target }}${{ matrix.ext }}
     
     - uses: actions/upload-artifact@v3
       with:
         name: bin
-        path: |
-          target/*/release/${{ env.BIN_NAME }}*
-          target/release/${{ env.BIN_NAME }}*
+        path: ${{ env.BIN_NAME }}-${{ matrix.target }}${{ matrix.ext }}
+
+  website:
+    needs: [build]
+    if: "success() && github.ref == 'refs/heads/main'"
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: get wheelhouse artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: bin
+        path: bin
+    
+    - run: mv bin site/
+
+    - name: Run template
+      run: python .github/workflows/scripts/site_template.py
+
+    - name: Setup Pages
+      uses: actions/configure-pages@v2
+
+    - name: Upload artifact
+      uses: actions/upload-pages-artifact@v1
+      with:
+        path: ./site
+
+  deploy_website:
+    needs: [website]
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v1
